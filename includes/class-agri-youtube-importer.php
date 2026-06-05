@@ -288,9 +288,11 @@ class Agri_Youtube_Importer {
                 $this->assign_taxonomy_term( $post_id, $playlist_title, $pl_tax );
             }
 
-            // Langue → countries (ex: "Français" ou "English")
-            $country_label = ( $lang === 'fr' ) ? 'Français' : 'English';
-            $this->assign_taxonomy_term( $post_id, $country_label, 'countries' );
+            // Pays détecté depuis le titre ou la description
+            $country = $this->detect_country( $title . ' ' . $desc );
+            if ( $country ) {
+                $this->assign_taxonomy_term( $post_id, $country, 'countries' );
+            }
         }
 
         // Langue Polylang (si installé)
@@ -413,6 +415,65 @@ class Agri_Youtube_Importer {
      * Assigne un term à une taxonomie donnée (crée le term s'il n'existe pas).
      * Ne fait rien si la taxonomie n'est pas enregistrée sur ce site.
      */
+    /**
+     * Détecte le pays depuis le texte (titre + description).
+     * Priorité aux pays africains liés à l'agriculture.
+     */
+    private function detect_country( $text ) {
+        $pays = [
+            // Afrique de l'Ouest
+            'Sénégal', 'Senegal', 'Mali', 'Burkina Faso', 'Burkina', 'Niger', 'Guinée', 'Guinee',
+            'Côte d\'Ivoire', "Cote d'Ivoire", 'Côte d\'ivoire', 'Ghana', 'Togo', 'Bénin', 'Benin',
+            'Nigeria', 'Nigéria', 'Mauritanie', 'Mauritania', 'Gambie', 'Sierra Leone', 'Liberia',
+            // Afrique Centrale
+            'Cameroun', 'Cameroon', 'Tchad', 'Chad', 'Congo', 'RDC', 'Gabon', 'Centrafrique',
+            'Guinée Équatoriale', 'São Tomé',
+            // Afrique de l'Est
+            'Éthiopie', 'Ethiopie', 'Ethiopia', 'Kenya', 'Tanzanie', 'Tanzania', 'Ouganda', 'Uganda',
+            'Rwanda', 'Burundi', 'Mozambique', 'Madagascar', 'Maurice', 'Comores', 'Djibouti', 'Somalie',
+            // Afrique du Nord
+            'Algérie', 'Algerie', 'Maroc', 'Morocco', 'Tunisie', 'Tunisia', 'Égypte', 'Egypte', 'Egypt',
+            'Libye', 'Libya', 'Mauritanie',
+            // Afrique Australe
+            'Afrique du Sud', 'South Africa', 'Zimbabwe', 'Zambie', 'Zambia', 'Angola', 'Namibie',
+            'Botswana', 'Malawi', 'Lesotho', 'Eswatini',
+            // Autres
+            'France', 'Belgique', 'Suisse', 'Canada', 'Brésil', 'Bresil',
+        ];
+
+        foreach ( $pays as $country ) {
+            if ( mb_stripos( $text, $country ) !== false ) {
+                // Normaliser certains noms
+                $normalized = [
+                    'Senegal'        => 'Sénégal',
+                    'Algerie'        => 'Algérie',
+                    'Ethiopie'       => 'Éthiopie',
+                    'Ethiopia'       => 'Éthiopie',
+                    'Benin'          => 'Bénin',
+                    'Guinee'         => 'Guinée',
+                    'Morocco'        => 'Maroc',
+                    'Tunisia'        => 'Tunisie',
+                    'Egypte'         => 'Égypte',
+                    'Egypt'          => 'Égypte',
+                    'Libya'          => 'Libye',
+                    'Cameroon'       => 'Cameroun',
+                    'Chad'           => 'Tchad',
+                    'Tanzania'       => 'Tanzanie',
+                    'Uganda'         => 'Ouganda',
+                    'Zambia'         => 'Zambie',
+                    'South Africa'   => 'Afrique du Sud',
+                    'Bresil'         => 'Brésil',
+                    "Cote d'Ivoire"  => 'Côte d\'Ivoire',
+                    'Burkina'        => 'Burkina Faso',
+                    'Mauritania'     => 'Mauritanie',
+                    'Liberia'        => 'Libéria',
+                ];
+                return $normalized[ $country ] ?? $country;
+            }
+        }
+        return '';
+    }
+
     private function assign_taxonomy_term( $post_id, $term_name, $taxonomy ) {
         if ( ! taxonomy_exists( $taxonomy ) ) return;
         $term_name = sanitize_text_field( $term_name );
