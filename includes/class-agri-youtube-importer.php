@@ -207,6 +207,12 @@ class Agri_Youtube_Importer {
         $is_live    = ( $format === 'stream' );
         $is_short   = ( $format === 'short' );
 
+        // Détection pays centralisée — utilisée pour taxonomie + SEO
+        $tags_text        = ! empty( $stats['tags'] ) ? implode( ' ', $stats['tags'] ) : '';
+        $detected_country = $this->detect_country( $title )
+                         ?: $this->detect_country( $tags_text )
+                         ?: $this->detect_country( wp_strip_all_tags( $desc ) );
+
         // Lives → tv_shows | Shorts + vidéos normales → post_type configuré
         $target_post_type = $is_live ? 'tv_shows' : $this->post_type;
 
@@ -288,13 +294,9 @@ class Agri_Youtube_Importer {
                 $this->assign_taxonomy_term( $post_id, $playlist_title, $pl_tax );
             }
 
-            // Pays détecté — priorité : titre → tags → description
-            $tags_text = ! empty( $stats['tags'] ) ? implode( ' ', $stats['tags'] ) : '';
-            $country   = $this->detect_country( $title )
-                      ?: $this->detect_country( $tags_text )
-                      ?: $this->detect_country( wp_strip_all_tags( $desc ) );
-            if ( $country ) {
-                $this->assign_taxonomy_term( $post_id, $country, 'countries' );
+            // Pays → taxonomie countries
+            if ( $detected_country ) {
+                $this->assign_taxonomy_term( $post_id, $detected_country, 'countries' );
             }
         }
 
@@ -307,6 +309,9 @@ class Agri_Youtube_Importer {
         if ( $thumb ) {
             $this->set_thumbnail( $post_id, $thumb, $title );
         }
+
+        // SEO Yoast — meta title, description, mots-clés
+        $this->set_yoast_seo( $post_id, $title, $desc, $stats['tags'] ?? [], $rubrique, $detected_country );
 
         return $post_id;
     }
@@ -418,6 +423,50 @@ class Agri_Youtube_Importer {
      * Assigne un term à une taxonomie donnée (crée le term s'il n'existe pas).
      * Ne fait rien si la taxonomie n'est pas enregistrée sur ce site.
      */
+    /**
+     * Remplit les meta Yoast SEO automatiquement depuis les données YouTube.
+     * - _yoast_wpseo_title       : titre SEO (titre vidéo + site)
+     * - _yoast_wpseo_metadesc    : description SEO (150 premiers caractères de la description)
+     * - _yoast_wpseo_focuskw     : mot-clé principal (rubrique ou premier tag)
+     * - _yoast_wpseo_metakeywords: mots-clés (tags YouTube)
+     */
+    private function set_yoast_seo( $post_id, $title, $desc, $tags = [], $rubrique = '', $country = '' ) {
+        // Titre SEO : "Titre de la vidéo - AgribusinessTV"
+        $seo_title = $title . ' - AgribusinessTV';
+        update_post_meta( $post_id, '_yoast_wpseo_title', sanitize_text_field( $seo_title ) );
+
+        // Meta description : description YouTube tronquée à 155 caractères
+        $clean_desc = wp_strip_all_tags( $desc );
+        $clean_desc = preg_replace( '/\s+/', ' ', $clean_desc );
+        $clean_desc = trim( $clean_desc );
+        if ( mb_strlen( $clean_desc ) > 155 ) {
+            $clean_desc = mb_substr( $clean_desc, 0, 152 ) . '...';
+        }
+        // Si description vide, construire une description depuis les données
+        if ( ! $clean_desc ) {
+            $parts = array_filter( [ $rubrique, $country, 'AgribusinessTV' ] );
+            $clean_desc = $title . ' — ' . implode( ', ', $parts );
+        }
+        update_post_meta( $post_id, '_yoast_wpseo_metadesc', sanitize_text_field( $clean_desc ) );
+
+        // Mot-clé principal : rubrique en priorité, sinon premier tag
+        $focus_kw = $rubrique ?: ( $tags[0] ?? '' );
+        if ( $focus_kw ) {
+            update_post_meta( $post_id, '_yoast_wpseo_focuskw', sanitize_text_field( $focus_kw ) );
+        }
+
+        // Mots-clés secondaires : tags YouTube + pays + rubrique
+        $keywords = array_filter( array_merge(
+            array_slice( $tags, 0, 10 ),
+            [ $rubrique, $country, 'agriculture africaine', 'agribusiness' ]
+        ) );
+        $keywords = array_unique( $keywords );
+        update_post_meta( $post_id, '_yoast_wpseo_metakeywords', implode( ', ', $keywords ) );
+
+        // Canonical URL : lien YouTube original
+        update_post_meta( $post_id, '_yoast_wpseo_canonical', '' );
+    }
+
     /**
      * Détecte le pays depuis le texte (titre + description).
      * Priorité aux pays africains liés à l'agriculture.
