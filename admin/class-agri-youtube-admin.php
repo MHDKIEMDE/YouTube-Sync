@@ -1,0 +1,413 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+class Agri_Youtube_Admin {
+
+    public function __construct() {
+        add_action( 'admin_menu', [ $this, 'add_menu' ] );
+        add_action( 'admin_init', [ $this, 'register_settings' ] );
+        add_action( 'admin_post_agri_yt_manual_sync', [ $this, 'manual_sync' ] );
+        add_action( 'admin_post_agri_yt_import_selected', [ $this, 'import_selected' ] );
+        add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_styles' ] );
+        add_action( 'admin_head-edit.php', [ $this, 'add_youtube_button_to_movies' ] );
+        // S'abonner WebSub automatiquement quand la clé API est enregistrée
+        add_action( 'update_option_agri_yt_api_key', [ $this, 'auto_websub_subscribe' ], 10, 2 );
+    }
+
+    public function auto_websub_subscribe( $old, $new ) {
+        if ( empty( $new ) ) return;
+        $websub = new Agri_Youtube_WebSub();
+        $websub->subscribe();
+    }
+
+    public function add_youtube_button_to_movies() {
+        $screen = get_current_screen();
+        if ( ! $screen || $screen->post_type !== get_option( 'agri_yt_post_type', 'movies' ) ) return;
+        $url = admin_url( 'options-general.php?page=agri-youtube-sync&tab=browse' );
+        ?>
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var btn = document.createElement('a');
+            btn.href = '<?php echo esc_js( $url ); ?>';
+            btn.className = 'page-title-action';
+            btn.style.cssText = 'background:#7ED957;color:#000;border-color:#5db346;font-weight:600;';
+            btn.innerHTML = '▶ Ajouter depuis YouTube';
+            var addNew = document.querySelector('.page-title-action');
+            if (addNew) addNew.parentNode.insertBefore(btn, addNew.nextSibling);
+        });
+        </script>
+        <?php
+    }
+
+    public function enqueue_styles( $hook ) {
+        if ( strpos( $hook, 'agri-youtube-sync' ) === false ) return;
+        wp_add_inline_style( 'wp-admin', '
+            .agri-video-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; margin-top:20px; }
+            .agri-video-card { background:#fff; border:2px solid #ddd; border-radius:8px; overflow:hidden; transition:border-color .2s; cursor:pointer; }
+            .agri-video-card:hover { border-color:#7ED957; }
+            .agri-video-card.selected { border-color:#7ED957; box-shadow:0 0 0 3px rgba(126,217,87,.3); }
+            .agri-video-card.already-imported { opacity:.5; border-color:#ccc; cursor:not-allowed; }
+            .agri-video-thumb { position:relative; padding-bottom:56.25%; background:#000; }
+            .agri-video-thumb img { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
+            .agri-video-thumb .badge { position:absolute; top:8px; right:8px; background:#7ED957; color:#000; font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; }
+            .agri-video-thumb .badge.imported { background:#ccc; color:#555; }
+            .agri-video-info { padding:12px; }
+            .agri-video-info h4 { margin:0 0 6px; font-size:13px; line-height:1.4; }
+            .agri-video-info span { font-size:11px; color:#888; }
+            .agri-select-bar { position:sticky; top:32px; z-index:99; background:#fff; border:1px solid #ddd; border-radius:8px; padding:12px 16px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
+        ' );
+    }
+
+    public function add_menu() {
+        add_options_page(
+            'Agri YouTube Sync',
+            'YouTube Sync',
+            'manage_options',
+            'agri-youtube-sync',
+            [ $this, 'settings_page' ]
+        );
+    }
+
+    public function register_settings() {
+        $fields = [
+            'agri_yt_api_key', 'agri_yt_post_type', 'agri_yt_channel_handle',
+            'agri_yt_post_status', 'agri_yt_category_id', 'agri_yt_import_source',
+            'agri_yt_playlist_id', 'agri_yt_max_results',
+        ];
+        foreach ( $fields as $field ) {
+            register_setting( 'agri_yt_settings', $field, 'sanitize_text_field' );
+        }
+    }
+
+    public function manual_sync() {
+        if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Non autorisé' );
+        check_admin_referer( 'agri_yt_manual_sync' );
+
+        $importer = new Agri_Youtube_Importer();
+        $result   = $importer->sync();
+
+        wp_redirect( add_query_arg( [
+            'page'    => 'agri-youtube-sync',
+            'synced'  => $result['imported'],
+            'skipped' => $result['skipped'],
+            'tab'     => 'browse',
+        ], admin_url( 'options-general.php' ) ) );
+        exit;
+    }
+
+    public function import_selected() {
+        if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Non autorisé' );
+        check_admin_referer( 'agri_yt_import_selected' );
+
+        $video_ids = isset( $_POST['video_ids'] ) ? (array) $_POST['video_ids'] : [];
+        $imported  = 0;
+
+        $api      = new Agri_Youtube_API();
+        $importer = new Agri_Youtube_Importer();
+
+        foreach ( $video_ids as $vid ) {
+            $vid = sanitize_text_field( $vid );
+            $details = $api->get_video_details( $vid );
+            if ( ! $details ) continue;
+
+            $video = [
+                'id'      => [ 'videoId' => $vid ],
+                'snippet' => $details['snippet'],
+            ];
+
+            $result = $importer->import_single( $video, $vid );
+            if ( $result ) $imported++;
+        }
+
+        wp_redirect( add_query_arg( [
+            'page'    => 'agri-youtube-sync',
+            'synced'  => $imported,
+            'skipped' => 0,
+            'tab'     => 'browse',
+        ], admin_url( 'options-general.php' ) ) );
+        exit;
+    }
+
+    private function get_imported_video_ids() {
+        global $wpdb;
+        $results = $wpdb->get_col(
+            "SELECT meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_agri_yt_video_id'"
+        );
+        return $results ?: [];
+    }
+
+    public function settings_page() {
+        $tab         = isset( $_GET['tab'] ) ? sanitize_text_field( $_GET['tab'] ) : 'browse';
+        $last_sync   = get_option( 'agri_yt_last_sync', 'Jamais' );
+        $last_result = get_option( 'agri_yt_last_sync_result', [] );
+        $post_types  = get_post_types( [ 'public' => true ], 'objects' );
+        $current_pt  = get_option( 'agri_yt_post_type', 'movies' );
+        $source      = get_option( 'agri_yt_import_source', 'channel' );
+
+        $api        = new Agri_Youtube_API();
+        $playlists  = get_option( 'agri_yt_api_key' ) ? $api->get_playlists() : [];
+        $taxonomies = get_object_taxonomies( $current_pt, 'objects' );
+        $first_tax  = ! empty( $taxonomies ) ? array_key_first( $taxonomies ) : 'category';
+        $terms      = get_terms( [ 'taxonomy' => $first_tax, 'hide_empty' => false ] );
+
+        // Récupérer uniquement les vidéos non importées pour la galerie
+        $yt_videos    = [];
+        $imported_ids = [];
+        $total_yt     = 0;
+        if ( get_option( 'agri_yt_api_key' ) && $tab === 'browse' ) {
+            $all_videos   = $api->get_all_videos();
+            $imported_ids = $this->get_imported_video_ids();
+            $total_yt     = count( $all_videos );
+            // Filtrer — garder uniquement les non importées
+            $yt_videos = array_filter( $all_videos, function( $video ) use ( $imported_ids ) {
+                $vid_id = $video['id']['videoId'] ?? null;
+                return $vid_id && ! in_array( $vid_id, $imported_ids );
+            });
+        }
+        ?>
+        <div class="wrap">
+            <h1 style="color:#1d2327;">🎬 Agri YouTube Sync</h1>
+
+            <?php if ( isset( $_GET['synced'] ) ) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>✅ <strong><?php echo intval( $_GET['synced'] ); ?> vidéos importées</strong><?php if ( intval( $_GET['skipped'] ) ) echo ', ' . intval( $_GET['skipped'] ) . ' ignorées (déjà existantes)'; ?>.</p>
+                </div>
+            <?php endif; ?>
+
+            <!-- ONGLETS -->
+            <nav class="nav-tab-wrapper" style="margin-bottom:20px;">
+                <a href="?page=agri-youtube-sync&tab=browse" class="nav-tab <?php echo $tab === 'browse' ? 'nav-tab-active' : ''; ?>">📺 Parcourir les vidéos</a>
+                <a href="?page=agri-youtube-sync&tab=settings" class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">⚙️ Réglages</a>
+            </nav>
+
+            <?php if ( $tab === 'browse' ) : ?>
+
+                <!-- STATUT SIMPLE + SYNC MANUELLE -->
+                <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-bottom:20px;border:1px solid #ddd;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                    <div>
+                        <strong>Dernière sync :</strong> <?php echo esc_html( $last_sync ); ?>
+                        <?php if ( $last_result ) : ?>
+                            &nbsp;|&nbsp; <strong><?php echo intval( $last_result['imported'] ?? 0 ); ?> importées</strong>, <?php echo intval( $last_result['skipped'] ?? 0 ); ?> ignorées
+                        <?php endif; ?>
+                    </div>
+                    <form method="post" action="<?php echo admin_url( 'admin-post.php' ); ?>">
+                        <input type="hidden" name="action" value="agri_yt_manual_sync">
+                        <?php wp_nonce_field( 'agri_yt_manual_sync' ); ?>
+                        <button type="submit" class="button button-primary" style="background:#7ED957;border-color:#5db346;color:#000;">
+                            ↻ Sync manuelle
+                        </button>
+                    </form>
+                </div>
+
+                <!-- COMPTEUR + RECHERCHE -->
+                <?php if ( $total_yt > 0 ) : ?>
+                <div style="background:#f0faf0;border:1px solid #7ED957;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                    <div style="display:flex;gap:24px;">
+                        <span>📺 <strong><?php echo $total_yt; ?></strong> vidéos sur YouTube</span>
+                        <span>✅ <strong><?php echo count( $imported_ids ); ?></strong> déjà importées</span>
+                        <span>⬇ <strong><?php echo count( $yt_videos ); ?></strong> disponibles à importer</span>
+                    </div>
+                    <input type="text" id="agri-search" placeholder="🔍 Rechercher une vidéo..."
+                        style="padding:6px 12px;border:1px solid #ddd;border-radius:6px;width:280px;font-size:13px;"
+                        oninput="agriSearch(this.value)" />
+                </div>
+                <?php endif; ?>
+
+                <?php if ( empty( $yt_videos ) ) : ?>
+                    <div class="notice notice-success"><p>✅ Toutes les vidéos de votre chaîne sont déjà importées !</p></div>
+                <?php else : ?>
+
+                    <!-- BARRE DE SÉLECTION -->
+                    <form method="post" action="<?php echo admin_url( 'admin-post.php' ); ?>" id="agri-import-form">
+                        <input type="hidden" name="action" value="agri_yt_import_selected">
+                        <?php wp_nonce_field( 'agri_yt_import_selected' ); ?>
+
+                        <div class="agri-select-bar">
+                            <button type="button" onclick="agriSelectAll()" class="button">✅ Tout sélectionner</button>
+                            <button type="button" onclick="agriSelectNone()" class="button">✖ Tout désélectionner</button>
+                            <button type="submit" class="button button-primary" style="background:#7ED957;border-color:#5db346;color:#000;">
+                                ⬇ Importer les vidéos sélectionnées
+                            </button>
+                            <span id="agri-count" style="color:#666;font-size:13px;">0 vidéo(s) sélectionnée(s)</span>
+                        </div>
+
+                        <!-- GRILLE DES VIDÉOS NON IMPORTÉES -->
+                        <div class="agri-video-grid">
+                            <?php foreach ( $yt_videos as $video ) :
+                                $vid_id = $video['id']['videoId'] ?? null;
+                                if ( ! $vid_id ) continue;
+                                $snippet = $video['snippet'];
+                                $title   = esc_html( $snippet['title'] );
+                                $date    = date( 'd/m/Y', strtotime( $snippet['publishedAt'] ) );
+                                $thumb   = $snippet['thumbnails']['high']['url'] ?? $snippet['thumbnails']['default']['url'] ?? '';
+                            ?>
+                                <div class="agri-video-card" onclick="agriToggle(this, '<?php echo esc_js( $vid_id ); ?>')">
+                                    <div class="agri-video-thumb">
+                                        <img src="<?php echo esc_url( $thumb ); ?>" alt="<?php echo $title; ?>" loading="lazy" />
+                                        <span class="badge">YouTube</span>
+                                    </div>
+                                    <div class="agri-video-info">
+                                        <h4><?php echo $title; ?></h4>
+                                        <span><?php echo $date; ?></span>
+                                        <input type="checkbox" name="video_ids[]"
+                                            value="<?php echo esc_attr( $vid_id ); ?>"
+                                            class="agri-checkbox"
+                                            style="display:none;" />
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </form>
+
+                    <script>
+                    function agriToggle(card, id) {
+                        card.classList.toggle('selected');
+                        var cb = card.querySelector('.agri-checkbox');
+                        if (cb) cb.checked = card.classList.contains('selected');
+                        agriUpdateCount();
+                    }
+                    function agriSelectAll() {
+                        document.querySelectorAll('.agri-video-card:not([style*="display: none"])').forEach(function(c) {
+                            c.classList.add('selected');
+                            var cb = c.querySelector('.agri-checkbox');
+                            if (cb) cb.checked = true;
+                        });
+                        agriUpdateCount();
+                    }
+                    function agriSelectNone() {
+                        document.querySelectorAll('.agri-video-card').forEach(function(c) {
+                            c.classList.remove('selected');
+                            var cb = c.querySelector('.agri-checkbox');
+                            if (cb) cb.checked = false;
+                        });
+                        agriUpdateCount();
+                    }
+                    function agriUpdateCount() {
+                        var n = document.querySelectorAll('.agri-checkbox:checked').length;
+                        document.getElementById('agri-count').textContent = n + ' vidéo(s) sélectionnée(s)';
+                    }
+                    function agriSearch(q) {
+                        q = q.toLowerCase();
+                        document.querySelectorAll('.agri-video-card').forEach(function(c) {
+                            var title = c.querySelector('h4').textContent.toLowerCase();
+                            c.style.display = title.includes(q) ? '' : 'none';
+                        });
+                    }
+                    </script>
+
+                <?php endif; ?>
+
+            <?php elseif ( $tab === 'settings' ) : ?>
+
+                <form method="post" action="options.php">
+                    <?php settings_fields( 'agri_yt_settings' ); ?>
+
+                    <div style="background:#fff;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #ddd;">
+                        <h2>🔑 Connexion YouTube</h2>
+                        <table class="form-table">
+                            <tr>
+                                <th>Clé API YouTube</th>
+                                <td>
+                                    <input type="text" name="agri_yt_api_key"
+                                        value="<?php echo esc_attr( get_option( 'agri_yt_api_key' ) ); ?>"
+                                        class="regular-text" placeholder="AIzaSy..." />
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Handle YouTube</th>
+                                <td>
+                                    <input type="text" name="agri_yt_channel_handle"
+                                        value="<?php echo esc_attr( get_option( 'agri_yt_channel_handle', 'AgribusinessTV' ) ); ?>"
+                                        class="regular-text" placeholder="AgribusinessTV" />
+                                    <p class="description">Sans le @ — ex: AgribusinessTV</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div style="background:#fff;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #ddd;">
+                        <h2>📥 Source d'import</h2>
+                        <table class="form-table">
+                            <tr>
+                                <th>Importer depuis</th>
+                                <td>
+                                    <label><input type="radio" name="agri_yt_import_source" value="channel" <?php checked( $source, 'channel' ); ?> /> Toute la chaîne</label>
+                                    &nbsp;&nbsp;
+                                    <label><input type="radio" name="agri_yt_import_source" value="playlist" <?php checked( $source, 'playlist' ); ?> /> Une playlist spécifique</label>
+                                </td>
+                            </tr>
+                            <?php if ( ! empty( $playlists ) ) : ?>
+                            <tr>
+                                <th>Playlist</th>
+                                <td>
+                                    <select name="agri_yt_playlist_id">
+                                        <option value="">— Choisir une playlist —</option>
+                                        <?php foreach ( $playlists as $pl ) : ?>
+                                            <option value="<?php echo esc_attr( $pl['id'] ); ?>"
+                                                <?php selected( get_option( 'agri_yt_playlist_id' ), $pl['id'] ); ?>>
+                                                <?php echo esc_html( $pl['snippet']['title'] ); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </td>
+                            </tr>
+                            <?php endif; ?>
+                            <tr>
+                                <th>Nombre de vidéos max</th>
+                                <td>
+                                    <select name="agri_yt_max_results">
+                                        <?php foreach ( [ 10, 25, 50, 100, 200, 500 ] as $n ) : ?>
+                                            <option value="<?php echo $n; ?>" <?php selected( get_option( 'agri_yt_max_results', 50 ), $n ); ?>><?php echo $n; ?> vidéos</option>
+                                        <?php endforeach; ?>
+                                        <option value="9999" <?php selected( get_option( 'agri_yt_max_results', 50 ), 9999 ); ?>>Toutes les vidéos</option>
+                                    </select>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div style="background:#fff;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #ddd;">
+                        <h2>📝 Publication</h2>
+                        <table class="form-table">
+                            <tr>
+                                <th>Type de contenu</th>
+                                <td>
+                                    <select name="agri_yt_post_type">
+                                        <?php foreach ( $post_types as $pt ) : ?>
+                                            <option value="<?php echo esc_attr( $pt->name ); ?>" <?php selected( $current_pt, $pt->name ); ?>><?php echo esc_html( $pt->label ); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Statut à l'import</th>
+                                <td>
+                                    <select name="agri_yt_post_status">
+                                        <option value="publish" <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'publish' ); ?>>Publié</option>
+                                        <option value="draft" <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'draft' ); ?>>Brouillon</option>
+                                        <option value="pending" <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'pending' ); ?>>En attente de relecture</option>
+                                    </select>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Catégorie automatique</th>
+                                <td>
+                                    <select name="agri_yt_category_id">
+                                        <option value="">— Aucune —</option>
+                                        <?php if ( ! is_wp_error( $terms ) ) foreach ( $terms as $term ) : ?>
+                                            <option value="<?php echo esc_attr( $term->term_id ); ?>" <?php selected( get_option( 'agri_yt_category_id' ), $term->term_id ); ?>><?php echo esc_html( $term->name ); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <?php submit_button( 'Enregistrer les réglages' ); ?>
+                </form>
+
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+}
