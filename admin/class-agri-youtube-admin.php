@@ -14,6 +14,7 @@ class Agri_Youtube_Admin {
         // Metabox import YouTube sur la page d'ajout de vidéo
         add_action( 'add_meta_boxes', [ $this, 'add_youtube_import_metabox' ] );
         add_action( 'wp_ajax_agri_yt_fetch_video', [ $this, 'ajax_fetch_video' ] );
+        add_action( 'save_post', [ $this, 'save_youtube_metabox' ] );
     }
 
     public function auto_websub_subscribe( $old, $new ) {
@@ -501,19 +502,32 @@ class Agri_Youtube_Admin {
             'agri_yt_import_metabox',
             '▶ Importer depuis YouTube',
             [ $this, 'render_youtube_import_metabox' ],
-            [ $post_type, 'videos' ],
+            [ $post_type, 'videos', 'tv_shows' ],
             'side',
             'high'
         );
     }
 
     public function render_youtube_import_metabox( $post ) {
+        $saved_channel = get_post_meta( $post->ID, '_agri_yt_channel_source', true );
+        $own_handle    = get_option( 'agri_yt_channel_handle', 'AgribusinessTV' );
         ?>
         <div id="agri-yt-metabox">
             <p style="font-size:12px;color:#666;margin-top:0;">Collez une URL YouTube pour pré-remplir automatiquement tous les champs.</p>
             <input type="text" id="agri-yt-url-input"
                 placeholder="https://www.youtube.com/watch?v=..."
                 style="width:100%;margin-bottom:8px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" />
+
+            <!-- Chaîne source -->
+            <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">Chaîne source :</label>
+            <input type="text" id="agri-yt-channel-input" name="agri_yt_channel_source"
+                value="<?php echo esc_attr( $saved_channel ?: '@' . $own_handle ); ?>"
+                placeholder="@AgribusinessTV"
+                style="width:100%;margin-bottom:8px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" />
+            <p style="font-size:11px;color:#aaa;margin:0 0 8px;">Modifiez si la vidéo vient d'une autre chaîne.</p>
+
+            <?php wp_nonce_field( 'agri_yt_save_metabox', 'agri_yt_metabox_nonce' ); ?>
+
             <button type="button" id="agri-yt-fetch-btn"
                 style="width:100%;background:#7ED957;border:1px solid #5db346;color:#000;font-weight:600;padding:7px;border-radius:4px;cursor:pointer;font-size:13px;">
                 ⬇ Récupérer les infos YouTube
@@ -568,10 +582,19 @@ class Agri_Youtube_Admin {
                 }
 
                 // Aperçu
+                // Mettre à jour le champ chaîne source si vidéo externe
+                if ( d.channel_title ) {
+                    var channelInput = document.getElementById('agri-yt-channel-input');
+                    if ( channelInput ) channelInput.value = d.channel_title;
+                }
+                if ( d.is_external ) {
+                    status.innerHTML = '<span style="color:#e65c00;">⚠️ Vidéo externe : ' + d.channel_title + '</span>';
+                }
+
                 document.getElementById('agri-yt-preview').style.display = 'block';
                 document.getElementById('agri-yt-thumb-preview').src = d.thumb;
                 document.getElementById('agri-yt-title-preview').textContent = d.title;
-                document.getElementById('agri-yt-stats-preview').textContent = '👁 ' + d.views + '  ·  ⏱ ' + d.duration + '  ·  ' + d.lang.toUpperCase();
+                document.getElementById('agri-yt-stats-preview').textContent = '👁 ' + d.views + '  ·  ⏱ ' + d.duration + '  ·  ' + d.lang.toUpperCase() + ( d.is_external ? '  ·  📡 ' + d.channel_title : '' );
 
                 // Stocker l'ID pour la sauvegarde
                 var hidden = document.createElement('input');
@@ -587,6 +610,24 @@ class Agri_Youtube_Admin {
         });
         </script>
         <?php
+    }
+
+    public function save_youtube_metabox( $post_id ) {
+        if ( ! isset( $_POST['agri_yt_metabox_nonce'] ) ) return;
+        if ( ! wp_verify_nonce( $_POST['agri_yt_metabox_nonce'], 'agri_yt_save_metabox' ) ) return;
+        if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) return;
+        if ( ! current_user_can( 'edit_post', $post_id ) ) return;
+
+        if ( isset( $_POST['agri_yt_channel_source'] ) ) {
+            update_post_meta( $post_id, '_agri_yt_channel_source', sanitize_text_field( $_POST['agri_yt_channel_source'] ) );
+        }
+        if ( isset( $_POST['agri_yt_video_id_import'] ) ) {
+            update_post_meta( $post_id, '_agri_yt_video_id', sanitize_text_field( $_POST['agri_yt_video_id_import'] ) );
+            $vid = sanitize_text_field( $_POST['agri_yt_video_id_import'] );
+            update_post_meta( $post_id, '_agri_yt_video_url', 'https://www.youtube.com/watch?v=' . $vid );
+            update_post_meta( $post_id, 'videos_url',  'https://www.youtube.com/watch?v=' . $vid );
+            update_post_meta( $post_id, 'videos_type', 'youtube' );
+        }
     }
 
     public function ajax_fetch_video() {
@@ -614,15 +655,21 @@ class Agri_Youtube_Admin {
                . 'frameborder="0" allowfullscreen></iframe>'
                . '</div>';
 
+        $channel_title = sanitize_text_field( $snippet['channelTitle'] ?? '' );
+        $own_handle    = get_option( 'agri_yt_channel_handle', 'AgribusinessTV' );
+        $is_external   = ! empty( $channel_title ) && stripos( $channel_title, $own_handle ) === false;
+
         wp_send_json_success( [
-            'video_id'    => $video_id,
-            'title'       => sanitize_text_field( $snippet['title'] ),
-            'description' => wp_strip_all_tags( $snippet['description'] ),
-            'thumb'       => esc_url( $thumb ),
-            'embed'       => $embed,
-            'views'       => number_format_i18n( intval( $stats['views'] ?? 0 ) ),
-            'duration'    => $stats['duration_fmt'] ?? '',
-            'lang'        => $lang,
+            'video_id'      => $video_id,
+            'title'         => sanitize_text_field( $snippet['title'] ),
+            'description'   => wp_strip_all_tags( $snippet['description'] ),
+            'thumb'         => esc_url( $thumb ),
+            'embed'         => $embed,
+            'views'         => number_format_i18n( intval( $stats['views'] ?? 0 ) ),
+            'duration'      => $stats['duration_fmt'] ?? '',
+            'lang'          => $lang,
+            'channel_title' => $channel_title,
+            'is_external'   => $is_external,
         ] );
     }
 }

@@ -161,11 +161,18 @@ class Agri_Youtube_Importer {
                . 'frameborder="0" allowfullscreen></iframe>'
                . '</div>';
 
+        $is_live    = ! empty( $stats['is_live'] );
+        $live_label = $snippet['liveBroadcastContent'] ?? '';
+        $is_live    = $is_live || in_array( $live_label, [ 'live', 'upcoming' ], true );
+
+        // Les lives vont dans tv_shows, les vidéos normales dans le post_type configuré
+        $target_post_type = $is_live ? 'tv_shows' : $this->post_type;
+
         $post_data = [
             'post_title'   => $title,
             'post_content' => $embed . "\n\n" . $desc,
             'post_status'  => $this->post_status,
-            'post_type'    => $this->post_type,
+            'post_type'    => $target_post_type,
             'post_date'    => $date,
         ];
 
@@ -177,8 +184,9 @@ class Agri_Youtube_Importer {
         update_post_meta( $post_id, '_agri_yt_video_url', 'https://www.youtube.com/watch?v=' . $video_id );
         update_post_meta( $post_id, '_agri_yt_lang',      $lang );
         update_post_meta( $post_id, '_agri_yt_rubrique',  sanitize_text_field( $rubrique ) );
+        update_post_meta( $post_id, '_agri_yt_is_live',   (int) $is_live );
 
-        // StreamVid
+        // StreamVid — meta compatibles sur les deux post types
         update_post_meta( $post_id, 'videos_url',  'https://www.youtube.com/watch?v=' . $video_id );
         update_post_meta( $post_id, 'videos_type', 'youtube' );
 
@@ -187,27 +195,41 @@ class Agri_Youtube_Importer {
             $this->save_stats_meta( $post_id, $stats );
         }
 
-        // Catégorie = rubrique (créée automatiquement si inexistante)
-        if ( $rubrique ) {
-            $this->assign_rubrique( $post_id, $rubrique );
-        }
-
-        // Tags YouTube → taxonomie videos_tag (StreamVid) + tags WordPress standard
-        if ( ! empty( $stats['tags'] ) ) {
-            wp_set_post_tags( $post_id, $stats['tags'], false );
-            if ( taxonomy_exists( 'videos_tag' ) ) {
-                wp_set_object_terms( $post_id, $stats['tags'], 'videos_tag', false );
+        if ( $is_live ) {
+            // --- LIVE → tv_shows ---
+            // Rubrique → genres
+            if ( $rubrique ) {
+                $this->assign_taxonomy_term( $post_id, $rubrique, 'genres' );
             }
-        }
-
-        // Playlist YouTube → taxonomie videos_playlist (StreamVid)
-        if ( $playlist_title ) {
-            $this->assign_taxonomy_term( $post_id, $playlist_title, 'videos_playlist' );
-        }
-
-        // Rubrique → taxonomie videos_cat (StreamVid) si elle existe
-        if ( $rubrique ) {
-            $this->assign_taxonomy_term( $post_id, $rubrique, 'videos_cat' );
+            // Playlist → tv_shows playlist
+            if ( $playlist_title ) {
+                $this->assign_taxonomy_term( $post_id, $playlist_title, 'tv_shows_playlist' );
+            }
+            // Tags → taxonomie tags de tv_shows
+            if ( ! empty( $stats['tags'] ) ) {
+                $this->assign_taxonomy_term( $post_id, $stats['tags'][0], 'topics' );
+                foreach ( $stats['tags'] as $tag ) {
+                    $this->assign_taxonomy_term( $post_id, $tag, 'post_tag' );
+                }
+            }
+        } else {
+            // --- VIDÉO NORMALE → videos ---
+            // Catégorie = rubrique
+            if ( $rubrique ) {
+                $this->assign_rubrique( $post_id, $rubrique );
+                $this->assign_taxonomy_term( $post_id, $rubrique, 'videos_cat' );
+            }
+            // Tags YouTube → videos_tag + tags WordPress
+            if ( ! empty( $stats['tags'] ) ) {
+                wp_set_post_tags( $post_id, $stats['tags'], false );
+                if ( taxonomy_exists( 'videos_tag' ) ) {
+                    wp_set_object_terms( $post_id, $stats['tags'], 'videos_tag', false );
+                }
+            }
+            // Playlist → videos_playlist
+            if ( $playlist_title ) {
+                $this->assign_taxonomy_term( $post_id, $playlist_title, 'videos_playlist' );
+            }
         }
 
         // Langue Polylang (si installé)
