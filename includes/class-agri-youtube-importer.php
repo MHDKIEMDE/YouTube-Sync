@@ -288,8 +288,11 @@ class Agri_Youtube_Importer {
                 $this->assign_taxonomy_term( $post_id, $playlist_title, $pl_tax );
             }
 
-            // Pays détecté depuis le titre ou la description
-            $country = $this->detect_country( $title . ' ' . $desc );
+            // Pays détecté — priorité : titre → tags → description
+            $tags_text = ! empty( $stats['tags'] ) ? implode( ' ', $stats['tags'] ) : '';
+            $country   = $this->detect_country( $title )
+                      ?: $this->detect_country( $tags_text )
+                      ?: $this->detect_country( wp_strip_all_tags( $desc ) );
             if ( $country ) {
                 $this->assign_taxonomy_term( $post_id, $country, 'countries' );
             }
