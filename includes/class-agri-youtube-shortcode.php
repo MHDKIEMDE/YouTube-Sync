@@ -36,6 +36,7 @@ class Agri_Youtube_Shortcode {
         $atts = shortcode_atts( [
             'lang'     => '',
             'rubrique' => '',
+            'format'   => '',   // short | stream | video | '' (tous)
             'limit'    => 12,
             'columns'  => 3,
             'orderby'  => 'date',
@@ -57,6 +58,16 @@ class Agri_Youtube_Shortcode {
         }
         if ( $atts['rubrique'] ) {
             $meta_query[] = [ 'key' => '_agri_yt_rubrique', 'value' => sanitize_text_field( $atts['rubrique'] ) ];
+        }
+        if ( $atts['format'] ) {
+            $meta_query[] = [ 'key' => '_agri_yt_format', 'value' => sanitize_text_field( $atts['format'] ) ];
+        }
+
+        // Les streams viennent de tv_shows, les autres du post_type configuré
+        if ( $atts['format'] === 'stream' ) {
+            $post_type = 'tv_shows';
+        } elseif ( $atts['format'] === 'short' || $atts['format'] === 'video' ) {
+            $post_type = get_option( 'agri_yt_post_type', 'movies' );
         }
 
         $orderby_map = [

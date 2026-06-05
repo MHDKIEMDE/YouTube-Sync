@@ -69,6 +69,64 @@ function agri_yt_auto_websub() {
     }
 }
 
+// Shortcode [agri_live] — liste les streams actifs et replays
+add_shortcode( 'agri_live', 'agri_yt_live_shortcode' );
+function agri_yt_live_shortcode( $atts ) {
+    $atts = shortcode_atts( [ 'limit' => 6, 'columns' => 3 ], $atts );
+    $cols = min( 4, max( 1, intval( $atts['limit'] ) ) );
+
+    $lives = get_posts( [
+        'post_type'      => 'tv_shows',
+        'post_status'    => 'publish',
+        'posts_per_page' => intval( $atts['limit'] ),
+        'orderby'        => 'date',
+        'order'          => 'DESC',
+        'meta_query'     => [
+            [ 'key' => '_agri_yt_format', 'value' => 'stream' ],
+        ],
+    ] );
+
+    if ( empty( $lives ) ) {
+        return '<p class="agri-no-live">Aucun stream disponible pour le moment.</p>';
+    }
+
+    ob_start();
+    echo '<div class="agri-sc-grid cols-' . esc_attr( intval( $atts['columns'] ) ) . '">';
+    foreach ( $lives as $post ) {
+        $post_id  = $post->ID;
+        $video_id = get_post_meta( $post_id, '_agri_yt_video_id', true );
+        $is_live  = (bool) get_post_meta( $post_id, '_agri_yt_is_live', true );
+        $views    = intval( get_post_meta( $post_id, '_agri_yt_views', true ) );
+        $thumb    = get_the_post_thumbnail_url( $post_id, 'medium_large' );
+        if ( ! $thumb && $video_id ) {
+            $thumb = 'https://img.youtube.com/vi/' . esc_attr( $video_id ) . '/hqdefault.jpg';
+        }
+        ?>
+        <div class="agri-sc-card">
+            <div class="agri-sc-thumb">
+                <a href="<?php echo get_permalink( $post_id ); ?>">
+                    <img src="<?php echo esc_url( $thumb ); ?>" alt="<?php echo esc_attr( $post->post_title ); ?>" loading="lazy" />
+                </a>
+                <?php if ( $is_live ) : ?>
+                    <span class="agri-sc-badge-live">🔴 EN DIRECT</span>
+                <?php else : ?>
+                    <span style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,.7);color:#fff;font-size:11px;padding:3px 8px;border-radius:4px;">📹 Replay</span>
+                <?php endif; ?>
+            </div>
+            <div class="agri-sc-info">
+                <h3><a href="<?php echo get_permalink( $post_id ); ?>"><?php echo esc_html( $post->post_title ); ?></a></h3>
+                <div class="agri-sc-meta">
+                    <span><?php echo get_the_date( 'd/m/Y', $post_id ); ?></span>
+                    <?php if ( $views ) : ?><span>👁 <?php echo Agri_Youtube_API::format_views( $views ); ?></span><?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+    echo '</div>';
+    return ob_get_clean();
+}
+
 // Activation
 register_activation_hook( __FILE__, 'agri_yt_activate' );
 function agri_yt_activate() {
@@ -77,6 +135,20 @@ function agri_yt_activate() {
 
     wp_clear_scheduled_hook( 'agri_yt_update_stats_event' );
     wp_schedule_event( time(), 'hourly', 'agri_yt_update_stats_event' );
+
+    wp_clear_scheduled_hook( 'agri_yt_sync_shorts_streams_event' );
+    wp_schedule_event( time(), 'every_5_minutes', 'agri_yt_sync_shorts_streams_event' );
+
+    // Créer la page /live automatiquement si elle n'existe pas
+    if ( ! get_page_by_path( 'live' ) ) {
+        wp_insert_post( [
+            'post_title'   => 'Live',
+            'post_name'    => 'live',
+            'post_status'  => 'publish',
+            'post_type'    => 'page',
+            'post_content' => '[agri_live limit="12" columns="3"]',
+        ] );
+    }
 
     add_action( 'init', function() {
         $websub = new Agri_Youtube_WebSub();
@@ -89,6 +161,7 @@ register_deactivation_hook( __FILE__, 'agri_yt_deactivate' );
 function agri_yt_deactivate() {
     wp_clear_scheduled_hook( 'agri_yt_sync_event' );
     wp_clear_scheduled_hook( 'agri_yt_update_stats_event' );
+    wp_clear_scheduled_hook( 'agri_yt_sync_shorts_streams_event' );
     wp_clear_scheduled_hook( 'agri_yt_websub_resubscribe' );
     $websub = new Agri_Youtube_WebSub();
     $websub->unsubscribe();

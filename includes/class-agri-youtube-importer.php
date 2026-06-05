@@ -76,6 +76,48 @@ class Agri_Youtube_Importer {
     }
 
     /**
+     * Sync des Shorts et Streams depuis les playlists spéciales YouTube.
+     */
+    public function sync_shorts_and_streams( $source = 'cron_5min' ) {
+        $imported = 0;
+        $skipped  = 0;
+
+        foreach ( [ 'shorts', 'streams' ] as $type ) {
+            $videos = ( $type === 'shorts' )
+                ? $this->api->get_shorts( 50 )
+                : $this->api->get_streams( 50 );
+
+            if ( empty( $videos ) ) continue;
+
+            $new_entries = [];
+            foreach ( $videos as $video ) {
+                $video_id = $video['snippet']['resourceId']['videoId'] ?? null;
+                if ( ! $video_id ) continue;
+                if ( $this->video_exists( $video_id ) ) { $skipped++; continue; }
+                $new_entries[] = [ 'video' => $video, 'id' => $video_id ];
+            }
+
+            if ( empty( $new_entries ) ) continue;
+
+            foreach ( array_chunk( $new_entries, 50 ) as $chunk ) {
+                $all_stats = $this->api->get_videos_stats( array_column( $chunk, 'id' ) );
+                foreach ( $chunk as $entry ) {
+                    $stats   = $all_stats[ $entry['id'] ] ?? [];
+                    $lang    = self::detect_language( $entry['video']['snippet']['title'] ?? '' );
+                    $post_id = $this->import_video( $entry['video'], $entry['id'], $stats, $lang, '', '' );
+                    if ( $post_id ) $imported++;
+                }
+            }
+        }
+
+        if ( $imported > 0 || $skipped > 0 ) {
+            Agri_Youtube_Logger::log( $imported, $skipped, $source );
+        }
+
+        return compact( 'imported', 'skipped' );
+    }
+
+    /**
      * Import d'une seule vidéo via WebSub — détecte langue/rubrique depuis ses playlists.
      */
     public function import_single( $video, $video_id ) {
@@ -161,11 +203,11 @@ class Agri_Youtube_Importer {
                . 'frameborder="0" allowfullscreen></iframe>'
                . '</div>';
 
-        $is_live    = ! empty( $stats['is_live'] );
-        $live_label = $snippet['liveBroadcastContent'] ?? '';
-        $is_live    = $is_live || in_array( $live_label, [ 'live', 'upcoming' ], true );
+        $format     = Agri_Youtube_API::detect_format( $stats, $snippet );
+        $is_live    = ( $format === 'stream' );
+        $is_short   = ( $format === 'short' );
 
-        // Les lives vont dans tv_shows, les vidéos normales dans le post_type configuré
+        // Lives → tv_shows | Shorts + vidéos normales → post_type configuré
         $target_post_type = $is_live ? 'tv_shows' : $this->post_type;
 
         $post_data = [
@@ -185,6 +227,7 @@ class Agri_Youtube_Importer {
         update_post_meta( $post_id, '_agri_yt_lang',      $lang );
         update_post_meta( $post_id, '_agri_yt_rubrique',  sanitize_text_field( $rubrique ) );
         update_post_meta( $post_id, '_agri_yt_is_live',   (int) $is_live );
+        update_post_meta( $post_id, '_agri_yt_format',    $format ); // short | stream | video
 
         // StreamVid — meta compatibles sur les deux post types
         update_post_meta( $post_id, 'videos_url',  'https://www.youtube.com/watch?v=' . $video_id );

@@ -203,6 +203,90 @@ class Agri_Youtube_API {
         return sprintf( '%d:%02d', $m, $s );
     }
 
+    // -------------------------------------------------------------------------
+    // PLAYLISTS SPÉCIALES — Shorts, Streams, Posts
+    // -------------------------------------------------------------------------
+
+    /**
+     * Retourne l'ID de la playlist spéciale YouTube à partir du channel_id.
+     * Shorts  → UUSH + channel_id[2:]
+     * Streams → UULV + channel_id[2:]
+     * Uploads → UU   + channel_id[2:]
+     */
+    private function special_playlist_id( $type = 'uploads' ) {
+        $channel_id = $this->get_channel_id();
+        if ( ! $channel_id ) return false;
+        $suffix = substr( $channel_id, 2 );
+        switch ( $type ) {
+            case 'shorts':  return 'UUSH' . $suffix;
+            case 'streams': return 'UULV' . $suffix;
+            default:        return 'UU'   . $suffix;
+        }
+    }
+
+    /**
+     * Récupère les Shorts de la chaîne (durée ≤ 60s, format vertical).
+     */
+    public function get_shorts( $max = 50 ) {
+        $playlist_id = $this->special_playlist_id( 'shorts' );
+        if ( ! $playlist_id ) return [];
+        return $this->get_videos_by_playlist( $playlist_id, $max );
+    }
+
+    /**
+     * Récupère les Streams (lives passés + en cours) de la chaîne.
+     */
+    public function get_streams( $max = 50 ) {
+        $playlist_id = $this->special_playlist_id( 'streams' );
+        if ( ! $playlist_id ) return [];
+        return $this->get_videos_by_playlist( $playlist_id, $max );
+    }
+
+    /**
+     * Récupère les posts (community posts) de la chaîne via activities API.
+     * Retourne un tableau de posts avec type, texte et date.
+     */
+    public function get_channel_posts( $max = 50 ) {
+        $channel_id = $this->get_channel_id();
+        if ( ! $channel_id ) return [];
+
+        $url = add_query_arg( [
+            'part'       => 'snippet,contentDetails',
+            'channelId'  => $channel_id,
+            'maxResults' => min( $max, 50 ),
+            'key'        => $this->api_key,
+        ], 'https://www.googleapis.com/youtube/v3/activities' );
+
+        $response = wp_remote_get( $url );
+        if ( is_wp_error( $response ) ) return [];
+
+        $data  = json_decode( wp_remote_retrieve_body( $response ), true );
+        $items = $data['items'] ?? [];
+
+        // Filtrer uniquement les posts (bulletinPosted) et exclure les uploads déjà gérés
+        return array_filter( $items, function( $item ) {
+            return in_array( $item['snippet']['type'] ?? '', [ 'bulletinPosted', 'upload' ], true );
+        });
+    }
+
+    /**
+     * Détecte le format d'une vidéo depuis ses stats.
+     * Retourne : 'short' | 'stream' | 'video'
+     */
+    public static function detect_format( $stats, $snippet = [] ) {
+        $duration_sec = intval( $stats['duration_sec'] ?? 0 );
+        $is_live      = ! empty( $stats['is_live'] ) || ! empty( $stats['is_upcoming'] );
+        $live_content = $snippet['liveBroadcastContent'] ?? '';
+
+        if ( $is_live || in_array( $live_content, [ 'live', 'upcoming' ], true ) ) {
+            return 'stream';
+        }
+        if ( $duration_sec > 0 && $duration_sec <= 60 ) {
+            return 'short';
+        }
+        return 'video';
+    }
+
     /** Formate un nombre de vues en format court (1.2M, 45K, 320). */
     public static function format_views( $views ) {
         $views = intval( $views );

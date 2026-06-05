@@ -4,8 +4,9 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class Agri_Youtube_Cron {
 
     public function __construct() {
-        add_action( 'agri_yt_sync_event',         [ $this, 'run_sync' ] );
-        add_action( 'agri_yt_update_stats_event', [ $this, 'run_update_stats' ] );
+        add_action( 'agri_yt_sync_event',                [ $this, 'run_sync' ] );
+        add_action( 'agri_yt_update_stats_event',        [ $this, 'run_update_stats' ] );
+        add_action( 'agri_yt_sync_shorts_streams_event', [ $this, 'run_sync_shorts_streams' ] );
     }
 
     public function run_sync() {
@@ -16,5 +17,10 @@ class Agri_Youtube_Cron {
     public function run_update_stats() {
         $importer = new Agri_Youtube_Importer();
         $importer->update_stats();
+    }
+
+    public function run_sync_shorts_streams() {
+        $importer = new Agri_Youtube_Importer();
+        $importer->sync_shorts_and_streams( 'cron_5min' );
     }
 }
