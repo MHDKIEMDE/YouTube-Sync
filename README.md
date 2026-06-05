@@ -2,7 +2,6 @@
 
 **Auteur :** Mohamed KIEMDE  
 **Email :** mkiemde00@gmail.com  
-**Site :** [agribusinesstv.com](https://agribusinesstv.com)  
 **Version :** 2.2.0  
 **Licence :** GPL v2 or later  
 **Compatibilité WordPress :** 6.0+  
@@ -201,9 +200,7 @@ do_action( 'agri_yt_after_import_video', $post_id, $video_id, $lang );
 ## Auteur
 
 **Mohamed KIEMDE**  
-Fondateur & Développeur — Agribusiness TV  
 Email : mkiemde00@gmail.com  
-Site : [agribusinesstv.com](https://agribusinesstv.com)  
 GitHub : [github.com/MHDKIEMDE](https://github.com/MHDKIEMDE)
 
 ---
