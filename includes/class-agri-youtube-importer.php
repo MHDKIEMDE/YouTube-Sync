@@ -275,8 +275,11 @@ class Agri_Youtube_Importer {
                 if ( taxonomy_exists( $tag_tax ) ) {
                     wp_set_object_terms( $post_id, $stats['tags'], $tag_tax, false );
                 }
-                // Topics = premier tag YouTube
-                $this->assign_taxonomy_term( $post_id, $stats['tags'][0], 'topics' );
+            }
+
+            // Topics = rubrique (même classification que Movies Categories)
+            if ( $rubrique ) {
+                $this->assign_taxonomy_term( $post_id, $rubrique, 'topics' );
             }
 
             // Playlist selon post type
