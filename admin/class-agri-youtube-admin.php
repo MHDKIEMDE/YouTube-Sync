@@ -402,7 +402,7 @@ class Agri_Youtube_Admin {
                                 <th>Type de contenu — Import manuel</th>
                                 <td>
                                     <select name="agri_yt_manual_post_type">
-                                        <?php $manual_pt = get_option( 'agri_yt_manual_post_type', 'movies' ); ?>
+                                        <?php $manual_pt = get_option( 'agri_yt_manual_post_type', 'videos' ); ?>
                                         <?php foreach ( $post_types as $pt ) : ?>
                                             <option value="<?php echo esc_attr( $pt->name ); ?>" <?php selected( $manual_pt, $pt->name ); ?>><?php echo esc_html( $pt->label ); ?></option>
                                         <?php endforeach; ?>
@@ -510,8 +510,8 @@ class Agri_Youtube_Admin {
     // -------------------------------------------------------------------------
 
     public function add_youtube_import_metabox() {
-        $sync_pt   = get_option( 'agri_yt_post_type', 'videos' );
-        $manual_pt = get_option( 'agri_yt_manual_post_type', 'movies' );
+        $sync_pt   = get_option( 'agri_yt_post_type', 'movies' );
+        $manual_pt = get_option( 'agri_yt_manual_post_type', 'videos' );
         $post_types = array_unique( [ $sync_pt, $manual_pt, 'videos', 'movies', 'tv_shows' ] );
         add_meta_box(
             'agri_yt_import_metabox',
@@ -526,8 +526,21 @@ class Agri_Youtube_Admin {
     public function render_youtube_import_metabox( $post ) {
         $saved_channel = get_post_meta( $post->ID, '_agri_yt_channel_source', true );
         $own_handle    = get_option( 'agri_yt_channel_handle', 'AgribusinessTV' );
+        $sync_pt       = get_option( 'agri_yt_post_type', 'movies' );
+        $manual_pt     = get_option( 'agri_yt_manual_post_type', 'videos' );
+        $current_pt    = get_post_type( $post->ID ) ?: get_current_screen()->post_type;
+        $is_manual_pt  = ( $current_pt === $manual_pt );
         ?>
         <div id="agri-yt-metabox">
+            <?php if ( $is_manual_pt ) : ?>
+                <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:6px 10px;margin-bottom:10px;font-size:12px;">
+                    📥 <strong>Import manuel</strong> — vidéo externe (toutes chaînes)
+                </div>
+            <?php else : ?>
+                <div style="background:#e8f5e9;border:1px solid #7ED957;border-radius:4px;padding:6px 10px;margin-bottom:10px;font-size:12px;">
+                    🔄 <strong>Sync @<?php echo esc_html( $own_handle ); ?></strong> — vidéo de votre chaîne
+                </div>
+            <?php endif; ?>
             <p style="font-size:12px;color:#666;margin-top:0;">Collez une URL YouTube pour pré-remplir automatiquement tous les champs.</p>
             <input type="text" id="agri-yt-url-input"
                 placeholder="https://www.youtube.com/watch?v=..."
@@ -634,7 +647,7 @@ class Agri_Youtube_Admin {
         if ( ! current_user_can( 'edit_post', $post_id ) ) return;
 
         $post_type  = get_post_type( $post_id );
-        $sync_pt    = get_option( 'agri_yt_post_type', 'videos' );
+        $sync_pt    = get_option( 'agri_yt_post_type', 'movies' );
         $is_manual  = ( $post_type !== $sync_pt );
 
         if ( isset( $_POST['agri_yt_channel_source'] ) ) {

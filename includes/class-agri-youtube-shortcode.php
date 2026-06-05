@@ -63,10 +63,12 @@ class Agri_Youtube_Shortcode {
             $meta_query[] = [ 'key' => '_agri_yt_format', 'value' => sanitize_text_field( $atts['format'] ) ];
         }
 
-        // Les streams viennent de tv_shows, les autres du post_type configuré
+        // Les streams → tv_shows | shorts/vidéos → movies (sync auto) | imports manuels → videos
         if ( $atts['format'] === 'stream' ) {
             $post_type = 'tv_shows';
-        } elseif ( $atts['format'] === 'short' || $atts['format'] === 'video' ) {
+        } elseif ( $atts['format'] === 'manual' ) {
+            $post_type = get_option( 'agri_yt_manual_post_type', 'videos' );
+        } else {
             $post_type = get_option( 'agri_yt_post_type', 'movies' );
         }
 
