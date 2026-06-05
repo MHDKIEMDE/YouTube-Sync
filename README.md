@@ -1,8 +1,8 @@
 # Agri YouTube Sync
 
-**Auteur :** Mohamed KIEMDE  
+**Concepteur :** Mohamed KIEMDE  
 **Email :** mkiemde00@gmail.com  
-**Version :** 2.2.0  
+**Version :** 2.3.0  
 **Licence :** GPL v2 or later  
 **Compatibilité WordPress :** 6.0+  
 **PHP minimum :** 7.4+
@@ -54,13 +54,33 @@ Il synchronise automatiquement toutes les vidéos de la chaîne YouTube [@Agribu
 - Compatibilité thème StreamVid (meta `videos_url` et `videos_type`)
 
 ### Interface d'administration
-- Page de configuration dans wp-admin
+- Page de configuration dans wp-admin avec 4 onglets : Parcourir / Réglages / Notifications email / Logs
 - Clé API YouTube configurable
 - Handle de chaîne configurable
 - Choix du type de post (movies, post, custom)
 - Choix du statut (publié, brouillon)
 - Lancement manuel de la synchronisation
 - Affichage de la date et du résultat du dernier sync
+- Badge 🔴 EN DIRECT affiché automatiquement sur les livestreams
+
+### Shortcode `[agri_videos]`
+- Affiche une grille de vidéos n'importe où sur le site
+- Paramètres : `lang`, `rubrique`, `limit`, `columns`, `orderby`, `order`, `paginate`
+- Exemple : `[agri_videos lang="fr" limit="9" columns="3" paginate="true"]`
+
+### Widget sidebar
+- Affiche les dernières vidéos dans n'importe quelle barre latérale
+- Options : titre, nombre de vidéos, langue (FR/EN/toutes), affichage des miniatures
+
+### Logs de synchronisation
+- Historique des 100 dernières synchronisations dans wp-admin
+- Source indiquée : Manuel, Cron 5 min, Cron horaire, WebSub
+- Bouton pour vider les logs
+
+### Notifications email
+- Activation/désactivation via un toggle dans les réglages
+- Adresse email, objet et corps personnalisables
+- Variables disponibles : `{count}`, `{site_url}`
 
 ---
 
@@ -110,16 +130,19 @@ Le plugin détectera automatiquement Polylang et assignera les langues à chaque
 
 ```
 agri-youtube-sync/
-├── agri-youtube-sync.php              # Fichier principal, hooks d'activation
-├── LICENSE                            # Licence GPL v2
-├── README.md                          # Cette documentation
+├── agri-youtube-sync.php                  # Fichier principal, hooks d'activation
+├── LICENSE                                # Licence GPL v2
+├── README.md                              # Cette documentation
 ├── includes/
-│   ├── class-agri-youtube-api.php     # Appels YouTube Data API v3
-│   ├── class-agri-youtube-importer.php # Import, classification FR/EN, Polylang
-│   ├── class-agri-youtube-cron.php    # Cron sync + cron stats horaire
-│   └── class-agri-youtube-websub.php  # Abonnement WebSub temps réel
+│   ├── class-agri-youtube-api.php         # Appels YouTube Data API v3
+│   ├── class-agri-youtube-importer.php    # Import, classification FR/EN, Polylang, email
+│   ├── class-agri-youtube-cron.php        # Cron sync + cron stats horaire
+│   ├── class-agri-youtube-websub.php      # Abonnement WebSub temps réel
+│   ├── class-agri-youtube-shortcode.php   # Shortcode [agri_videos]
+│   ├── class-agri-youtube-widget.php      # Widget sidebar
+│   └── class-agri-youtube-logger.php      # Logs de synchronisation
 └── admin/
-    └── class-agri-youtube-admin.php   # Interface wp-admin
+    └── class-agri-youtube-admin.php       # Interface wp-admin (4 onglets)
 ```
 
 ---
@@ -177,6 +200,14 @@ do_action( 'agri_yt_after_import_video', $post_id, $video_id, $lang );
 
 ## Changelog
 
+### v2.3.0 — 2026-06-05
+- Shortcode `[agri_videos]` avec filtres lang, rubrique, limit, columns, orderby, pagination
+- Widget sidebar "AgriTV — Dernières vidéos" avec options titre/nombre/langue/miniature
+- Logs de synchronisation (100 entrées max) avec onglet dédié dans wp-admin
+- Notifications email activables/désactivables via toggle, adresse/objet/corps configurables
+- Badge 🔴 EN DIRECT dans la grille admin et sur le front
+- 4 onglets dans wp-admin : Parcourir / Réglages / Notifications email / Logs
+
 ### v2.2.0 — 2026-06-05
 - Gestion bilingue FR/EN complète via playlists YouTube
 - Création automatique des catégories WordPress par rubrique
@@ -197,7 +228,7 @@ do_action( 'agri_yt_after_import_video', $post_id, $video_id, $lang );
 
 ---
 
-## Auteur
+## Concepteur
 
 **Mohamed KIEMDE**  
 Email : mkiemde00@gmail.com  
