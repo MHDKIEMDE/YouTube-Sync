@@ -81,13 +81,11 @@ class Agri_Youtube_Admin {
             'agri_yt_api_key', 'agri_yt_post_type', 'agri_yt_channel_handle',
             'agri_yt_post_status', 'agri_yt_category_id', 'agri_yt_import_source',
             'agri_yt_playlist_id', 'agri_yt_max_results',
-            'agri_yt_email_enabled', 'agri_yt_email_address',
-            'agri_yt_email_subject', 'agri_yt_email_body',
+            'agri_yt_email_enabled', 'agri_yt_email_address', 'agri_yt_email_subject',
         ];
         foreach ( $fields as $field ) {
             register_setting( 'agri_yt_settings', $field, 'sanitize_text_field' );
         }
-        // Le corps de l'email peut contenir des sauts de ligne
         register_setting( 'agri_yt_settings', 'agri_yt_email_body', 'sanitize_textarea_field' );
     }
 
