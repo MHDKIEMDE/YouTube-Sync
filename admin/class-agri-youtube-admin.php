@@ -82,9 +82,9 @@ class Agri_Youtube_Admin {
 
     public function register_settings() {
         $fields = [
-            'agri_yt_api_key', 'agri_yt_post_type', 'agri_yt_channel_handle',
-            'agri_yt_post_status', 'agri_yt_category_id', 'agri_yt_import_source',
-            'agri_yt_playlist_id', 'agri_yt_max_results',
+            'agri_yt_api_key', 'agri_yt_post_type', 'agri_yt_manual_post_type',
+            'agri_yt_channel_handle', 'agri_yt_post_status', 'agri_yt_category_id',
+            'agri_yt_import_source', 'agri_yt_playlist_id', 'agri_yt_max_results',
             'agri_yt_email_enabled', 'agri_yt_email_address', 'agri_yt_email_subject',
         ];
         foreach ( $fields as $field ) {
@@ -388,13 +388,26 @@ class Agri_Youtube_Admin {
                         <h2>📝 Publication</h2>
                         <table class="form-table">
                             <tr>
-                                <th>Type de contenu</th>
+                                <th>Type de contenu — Sync YouTube auto</th>
                                 <td>
                                     <select name="agri_yt_post_type">
                                         <?php foreach ( $post_types as $pt ) : ?>
                                             <option value="<?php echo esc_attr( $pt->name ); ?>" <?php selected( $current_pt, $pt->name ); ?>><?php echo esc_html( $pt->label ); ?></option>
                                         <?php endforeach; ?>
                                     </select>
+                                    <p class="description">Post type utilisé pour les vidéos synchronisées automatiquement depuis <strong>@AgribusinessTV</strong>.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Type de contenu — Import manuel</th>
+                                <td>
+                                    <select name="agri_yt_manual_post_type">
+                                        <?php $manual_pt = get_option( 'agri_yt_manual_post_type', 'movies' ); ?>
+                                        <?php foreach ( $post_types as $pt ) : ?>
+                                            <option value="<?php echo esc_attr( $pt->name ); ?>" <?php selected( $manual_pt, $pt->name ); ?>><?php echo esc_html( $pt->label ); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <p class="description">Post type utilisé quand vous importez une vidéo <strong>manuellement</strong> via le metabox (toutes chaînes).</p>
                                 </td>
                             </tr>
                             <tr>
@@ -497,12 +510,14 @@ class Agri_Youtube_Admin {
     // -------------------------------------------------------------------------
 
     public function add_youtube_import_metabox() {
-        $post_type = get_option( 'agri_yt_post_type', 'movies' );
+        $sync_pt   = get_option( 'agri_yt_post_type', 'videos' );
+        $manual_pt = get_option( 'agri_yt_manual_post_type', 'movies' );
+        $post_types = array_unique( [ $sync_pt, $manual_pt, 'videos', 'movies', 'tv_shows' ] );
         add_meta_box(
             'agri_yt_import_metabox',
             '▶ Importer depuis YouTube',
             [ $this, 'render_youtube_import_metabox' ],
-            [ $post_type, 'videos', 'tv_shows' ],
+            $post_types,
             'side',
             'high'
         );
@@ -618,15 +633,25 @@ class Agri_Youtube_Admin {
         if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) return;
         if ( ! current_user_can( 'edit_post', $post_id ) ) return;
 
+        $post_type  = get_post_type( $post_id );
+        $sync_pt    = get_option( 'agri_yt_post_type', 'videos' );
+        $is_manual  = ( $post_type !== $sync_pt );
+
         if ( isset( $_POST['agri_yt_channel_source'] ) ) {
             update_post_meta( $post_id, '_agri_yt_channel_source', sanitize_text_field( $_POST['agri_yt_channel_source'] ) );
         }
-        if ( isset( $_POST['agri_yt_video_id_import'] ) ) {
-            update_post_meta( $post_id, '_agri_yt_video_id', sanitize_text_field( $_POST['agri_yt_video_id_import'] ) );
+
+        // Marquer comme import manuel si le post type est différent du sync auto
+        if ( $is_manual ) {
+            update_post_meta( $post_id, '_agri_yt_import_type', 'manual' );
+        }
+
+        if ( isset( $_POST['agri_yt_video_id_import'] ) && ! empty( $_POST['agri_yt_video_id_import'] ) ) {
             $vid = sanitize_text_field( $_POST['agri_yt_video_id_import'] );
+            update_post_meta( $post_id, '_agri_yt_video_id',  $vid );
             update_post_meta( $post_id, '_agri_yt_video_url', 'https://www.youtube.com/watch?v=' . $vid );
-            update_post_meta( $post_id, 'videos_url',  'https://www.youtube.com/watch?v=' . $vid );
-            update_post_meta( $post_id, 'videos_type', 'youtube' );
+            update_post_meta( $post_id, 'videos_url',         'https://www.youtube.com/watch?v=' . $vid );
+            update_post_meta( $post_id, 'videos_type',        'youtube' );
         }
     }
 
