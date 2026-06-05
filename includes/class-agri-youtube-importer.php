@@ -54,7 +54,7 @@ class Agri_Youtube_Importer {
 
             foreach ( $new_entries as $entry ) {
                 $stats   = $all_stats[ $entry['id'] ] ?? [];
-                $post_id = $this->import_video( $entry['video'], $entry['id'], $stats, $lang, $rubrique );
+                $post_id = $this->import_video( $entry['video'], $entry['id'], $stats, $lang, $rubrique, $playlist_title );
                 if ( $post_id ) {
                     $imported++;
                     update_post_meta( $post_id, '_agri_yt_playlist_id', $playlist_id );
@@ -145,7 +145,7 @@ class Agri_Youtube_Importer {
     // IMPORT D'UNE VIDÉO
     // -------------------------------------------------------------------------
 
-    private function import_video( $video, $video_id, $stats = [], $lang = 'fr', $rubrique = '' ) {
+    private function import_video( $video, $video_id, $stats = [], $lang = 'fr', $rubrique = '', $playlist_title = '' ) {
         $snippet = $video['snippet'];
         $title   = sanitize_text_field( $snippet['title'] );
         $desc    = wp_kses_post( $snippet['description'] );
@@ -192,9 +192,22 @@ class Agri_Youtube_Importer {
             $this->assign_rubrique( $post_id, $rubrique );
         }
 
-        // Tags YouTube → tags WordPress
+        // Tags YouTube → taxonomie videos_tag (StreamVid) + tags WordPress standard
         if ( ! empty( $stats['tags'] ) ) {
             wp_set_post_tags( $post_id, $stats['tags'], false );
+            if ( taxonomy_exists( 'videos_tag' ) ) {
+                wp_set_object_terms( $post_id, $stats['tags'], 'videos_tag', false );
+            }
+        }
+
+        // Playlist YouTube → taxonomie videos_playlist (StreamVid)
+        if ( $playlist_title ) {
+            $this->assign_taxonomy_term( $post_id, $playlist_title, 'videos_playlist' );
+        }
+
+        // Rubrique → taxonomie videos_cat (StreamVid) si elle existe
+        if ( $rubrique ) {
+            $this->assign_taxonomy_term( $post_id, $rubrique, 'videos_cat' );
         }
 
         // Langue Polylang (si installé)
@@ -312,6 +325,25 @@ class Agri_Youtube_Importer {
     // -------------------------------------------------------------------------
     // HELPERS
     // -------------------------------------------------------------------------
+
+    /**
+     * Assigne un term à une taxonomie donnée (crée le term s'il n'existe pas).
+     * Ne fait rien si la taxonomie n'est pas enregistrée sur ce site.
+     */
+    private function assign_taxonomy_term( $post_id, $term_name, $taxonomy ) {
+        if ( ! taxonomy_exists( $taxonomy ) ) return;
+        $term_name = sanitize_text_field( $term_name );
+        if ( ! $term_name ) return;
+        $term = get_term_by( 'name', $term_name, $taxonomy );
+        if ( ! $term ) {
+            $result = wp_insert_term( $term_name, $taxonomy );
+            if ( is_wp_error( $result ) ) return;
+            $term_id = $result['term_id'];
+        } else {
+            $term_id = $term->term_id;
+        }
+        wp_set_object_terms( $post_id, $term_id, $taxonomy, true );
+    }
 
     private function video_exists( $video_id ) {
         $posts = get_posts( [
