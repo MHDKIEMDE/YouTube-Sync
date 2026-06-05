@@ -313,6 +313,17 @@ class Agri_Youtube_Importer {
     // HELPERS
     // -------------------------------------------------------------------------
 
+    private function video_exists( $video_id ) {
+        $posts = get_posts( [
+            'post_type'   => $this->post_type,
+            'meta_key'    => '_agri_yt_video_id',
+            'meta_value'  => $video_id,
+            'fields'      => 'ids',
+            'numberposts' => 1,
+        ]);
+        return ! empty( $posts );
+    }
+
     private function save_stats_meta( $post_id, $stats ) {
         update_post_meta( $post_id, '_agri_yt_views',        intval( $stats['views']        ?? 0 ) );
         update_post_meta( $post_id, '_agri_yt_likes',        intval( $stats['likes']        ?? 0 ) );
