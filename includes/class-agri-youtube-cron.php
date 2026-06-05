@@ -10,7 +10,7 @@ class Agri_Youtube_Cron {
 
     public function run_sync() {
         $importer = new Agri_Youtube_Importer();
-        $importer->sync();
+        $importer->sync( 'cron_5min' );
     }
 
     public function run_update_stats() {

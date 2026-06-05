@@ -4,13 +4,12 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class Agri_Youtube_Admin {
 
     public function __construct() {
-        add_action( 'admin_menu', [ $this, 'add_menu' ] );
-        add_action( 'admin_init', [ $this, 'register_settings' ] );
-        add_action( 'admin_post_agri_yt_manual_sync', [ $this, 'manual_sync' ] );
+        add_action( 'admin_menu',    [ $this, 'add_menu' ] );
+        add_action( 'admin_init',    [ $this, 'register_settings' ] );
+        add_action( 'admin_post_agri_yt_manual_sync',    [ $this, 'manual_sync' ] );
         add_action( 'admin_post_agri_yt_import_selected', [ $this, 'import_selected' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_styles' ] );
-        add_action( 'admin_head-edit.php', [ $this, 'add_youtube_button_to_movies' ] );
-        // S'abonner WebSub automatiquement quand la clé API est enregistrée
+        add_action( 'admin_head-edit.php',   [ $this, 'add_youtube_button_to_movies' ] );
         add_action( 'update_option_agri_yt_api_key', [ $this, 'auto_websub_subscribe' ], 10, 2 );
     }
 
@@ -51,10 +50,19 @@ class Agri_Youtube_Admin {
             .agri-video-thumb img { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
             .agri-video-thumb .badge { position:absolute; top:8px; right:8px; background:#7ED957; color:#000; font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; }
             .agri-video-thumb .badge.imported { background:#ccc; color:#555; }
+            .agri-video-thumb .badge-live { position:absolute; top:8px; left:8px; background:#e00; color:#fff; font-size:11px; font-weight:700; padding:3px 8px; border-radius:4px; animation:agri-blink 1s step-start infinite; }
+            @keyframes agri-blink { 50%{opacity:.4;} }
             .agri-video-info { padding:12px; }
             .agri-video-info h4 { margin:0 0 6px; font-size:13px; line-height:1.4; }
             .agri-video-info span { font-size:11px; color:#888; }
             .agri-select-bar { position:sticky; top:32px; z-index:99; background:#fff; border:1px solid #ddd; border-radius:8px; padding:12px 16px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
+            .agri-toggle-wrap { display:flex; align-items:center; gap:10px; }
+            .agri-toggle { position:relative; display:inline-block; width:46px; height:24px; }
+            .agri-toggle input { opacity:0; width:0; height:0; }
+            .agri-toggle-slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#ccc; border-radius:24px; transition:.3s; }
+            .agri-toggle-slider:before { position:absolute; content:""; height:18px; width:18px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.3s; }
+            .agri-toggle input:checked + .agri-toggle-slider { background:#7ED957; }
+            .agri-toggle input:checked + .agri-toggle-slider:before { transform:translateX(22px); }
         ' );
     }
 
@@ -73,10 +81,14 @@ class Agri_Youtube_Admin {
             'agri_yt_api_key', 'agri_yt_post_type', 'agri_yt_channel_handle',
             'agri_yt_post_status', 'agri_yt_category_id', 'agri_yt_import_source',
             'agri_yt_playlist_id', 'agri_yt_max_results',
+            'agri_yt_email_enabled', 'agri_yt_email_address',
+            'agri_yt_email_subject', 'agri_yt_email_body',
         ];
         foreach ( $fields as $field ) {
             register_setting( 'agri_yt_settings', $field, 'sanitize_text_field' );
         }
+        // Le corps de l'email peut contenir des sauts de ligne
+        register_setting( 'agri_yt_settings', 'agri_yt_email_body', 'sanitize_textarea_field' );
     }
 
     public function manual_sync() {
@@ -84,7 +96,7 @@ class Agri_Youtube_Admin {
         check_admin_referer( 'agri_yt_manual_sync' );
 
         $importer = new Agri_Youtube_Importer();
-        $result   = $importer->sync();
+        $result   = $importer->sync( 'manual' );
 
         wp_redirect( add_query_arg( [
             'page'    => 'agri-youtube-sync',
@@ -119,6 +131,10 @@ class Agri_Youtube_Admin {
             if ( $result ) $imported++;
         }
 
+        if ( $imported > 0 ) {
+            Agri_Youtube_Logger::log( $imported, 0, 'manual' );
+        }
+
         wp_redirect( add_query_arg( [
             'page'    => 'agri-youtube-sync',
             'synced'  => $imported,
@@ -150,7 +166,6 @@ class Agri_Youtube_Admin {
         $first_tax  = ! empty( $taxonomies ) ? array_key_first( $taxonomies ) : 'category';
         $terms      = get_terms( [ 'taxonomy' => $first_tax, 'hide_empty' => false ] );
 
-        // Récupérer uniquement les vidéos non importées pour la galerie
         $yt_videos    = [];
         $imported_ids = [];
         $total_yt     = 0;
@@ -158,7 +173,6 @@ class Agri_Youtube_Admin {
             $all_videos   = $api->get_all_videos();
             $imported_ids = $this->get_imported_video_ids();
             $total_yt     = count( $all_videos );
-            // Filtrer — garder uniquement les non importées
             $yt_videos = array_filter( $all_videos, function( $video ) use ( $imported_ids ) {
                 $vid_id = $video['id']['videoId'] ?? null;
                 return $vid_id && ! in_array( $vid_id, $imported_ids );
@@ -176,13 +190,14 @@ class Agri_Youtube_Admin {
 
             <!-- ONGLETS -->
             <nav class="nav-tab-wrapper" style="margin-bottom:20px;">
-                <a href="?page=agri-youtube-sync&tab=browse" class="nav-tab <?php echo $tab === 'browse' ? 'nav-tab-active' : ''; ?>">📺 Parcourir les vidéos</a>
+                <a href="?page=agri-youtube-sync&tab=browse"   class="nav-tab <?php echo $tab === 'browse'   ? 'nav-tab-active' : ''; ?>">📺 Parcourir les vidéos</a>
                 <a href="?page=agri-youtube-sync&tab=settings" class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">⚙️ Réglages</a>
+                <a href="?page=agri-youtube-sync&tab=email"    class="nav-tab <?php echo $tab === 'email'    ? 'nav-tab-active' : ''; ?>">📧 Notifications email</a>
+                <a href="?page=agri-youtube-sync&tab=logs"     class="nav-tab <?php echo $tab === 'logs'     ? 'nav-tab-active' : ''; ?>">📋 Logs</a>
             </nav>
 
             <?php if ( $tab === 'browse' ) : ?>
 
-                <!-- STATUT SIMPLE + SYNC MANUELLE -->
                 <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-bottom:20px;border:1px solid #ddd;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
                     <div>
                         <strong>Dernière sync :</strong> <?php echo esc_html( $last_sync ); ?>
@@ -199,7 +214,6 @@ class Agri_Youtube_Admin {
                     </form>
                 </div>
 
-                <!-- COMPTEUR + RECHERCHE -->
                 <?php if ( $total_yt > 0 ) : ?>
                 <div style="background:#f0faf0;border:1px solid #7ED957;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
                     <div style="display:flex;gap:24px;">
@@ -217,7 +231,6 @@ class Agri_Youtube_Admin {
                     <div class="notice notice-success"><p>✅ Toutes les vidéos de votre chaîne sont déjà importées !</p></div>
                 <?php else : ?>
 
-                    <!-- BARRE DE SÉLECTION -->
                     <form method="post" action="<?php echo admin_url( 'admin-post.php' ); ?>" id="agri-import-form">
                         <input type="hidden" name="action" value="agri_yt_import_selected">
                         <?php wp_nonce_field( 'agri_yt_import_selected' ); ?>
@@ -231,20 +244,23 @@ class Agri_Youtube_Admin {
                             <span id="agri-count" style="color:#666;font-size:13px;">0 vidéo(s) sélectionnée(s)</span>
                         </div>
 
-                        <!-- GRILLE DES VIDÉOS NON IMPORTÉES -->
                         <div class="agri-video-grid">
                             <?php foreach ( $yt_videos as $video ) :
-                                $vid_id = $video['id']['videoId'] ?? null;
+                                $vid_id  = $video['id']['videoId'] ?? null;
                                 if ( ! $vid_id ) continue;
                                 $snippet = $video['snippet'];
                                 $title   = esc_html( $snippet['title'] );
                                 $date    = date( 'd/m/Y', strtotime( $snippet['publishedAt'] ) );
                                 $thumb   = $snippet['thumbnails']['high']['url'] ?? $snippet['thumbnails']['default']['url'] ?? '';
+                                $is_live = ! empty( $snippet['liveBroadcastContent'] ) && $snippet['liveBroadcastContent'] === 'live';
                             ?>
                                 <div class="agri-video-card" onclick="agriToggle(this, '<?php echo esc_js( $vid_id ); ?>')">
                                     <div class="agri-video-thumb">
                                         <img src="<?php echo esc_url( $thumb ); ?>" alt="<?php echo $title; ?>" loading="lazy" />
                                         <span class="badge">YouTube</span>
+                                        <?php if ( $is_live ) : ?>
+                                            <span class="badge-live">🔴 EN DIRECT</span>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="agri-video-info">
                                         <h4><?php echo $title; ?></h4>
@@ -384,7 +400,7 @@ class Agri_Youtube_Admin {
                                 <td>
                                     <select name="agri_yt_post_status">
                                         <option value="publish" <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'publish' ); ?>>Publié</option>
-                                        <option value="draft" <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'draft' ); ?>>Brouillon</option>
+                                        <option value="draft"   <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'draft' ); ?>>Brouillon</option>
                                         <option value="pending" <?php selected( get_option( 'agri_yt_post_status', 'publish' ), 'pending' ); ?>>En attente de relecture</option>
                                     </select>
                                 </td>
@@ -405,6 +421,69 @@ class Agri_Youtube_Admin {
 
                     <?php submit_button( 'Enregistrer les réglages' ); ?>
                 </form>
+
+            <?php elseif ( $tab === 'email' ) : ?>
+
+                <form method="post" action="options.php">
+                    <?php settings_fields( 'agri_yt_settings' ); ?>
+
+                    <div style="background:#fff;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #ddd;">
+                        <h2>📧 Notifications email</h2>
+                        <p style="color:#555;">Recevez un email automatiquement à chaque fois que des vidéos sont importées.</p>
+                        <table class="form-table">
+                            <tr>
+                                <th>Activer les notifications</th>
+                                <td>
+                                    <div class="agri-toggle-wrap">
+                                        <label class="agri-toggle">
+                                            <input type="checkbox" name="agri_yt_email_enabled" value="1"
+                                                <?php checked( get_option( 'agri_yt_email_enabled', 0 ), 1 ); ?> />
+                                            <span class="agri-toggle-slider"></span>
+                                        </label>
+                                        <span style="font-size:13px;color:#555;">
+                                            <?php echo get_option( 'agri_yt_email_enabled' ) ? '<strong style="color:#2e7d32;">Activées</strong>' : '<span style="color:#888;">Désactivées</span>'; ?>
+                                        </span>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Adresse email destinataire</th>
+                                <td>
+                                    <input type="email" name="agri_yt_email_address"
+                                        value="<?php echo esc_attr( get_option( 'agri_yt_email_address', get_option( 'admin_email' ) ) ); ?>"
+                                        class="regular-text" placeholder="<?php echo esc_attr( get_option( 'admin_email' ) ); ?>" />
+                                    <p class="description">Par défaut : adresse administrateur WordPress.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Objet de l'email</th>
+                                <td>
+                                    <input type="text" name="agri_yt_email_subject"
+                                        value="<?php echo esc_attr( get_option( 'agri_yt_email_subject', '[AgriTV] {count} nouvelle(s) vidéo(s) importée(s)' ) ); ?>"
+                                        class="regular-text" />
+                                    <p class="description">Variable disponible : <code>{count}</code> — nombre de vidéos importées.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Corps de l'email</th>
+                                <td>
+                                    <textarea name="agri_yt_email_body" rows="6" class="large-text"><?php
+                                        echo esc_textarea( get_option( 'agri_yt_email_body',
+                                            "Bonjour,\n\n{count} nouvelle(s) vidéo(s) viennent d'être importées sur votre site.\n\nConsultez les vidéos : {site_url}"
+                                        ) );
+                                    ?></textarea>
+                                    <p class="description">Variables : <code>{count}</code>, <code>{site_url}</code></p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <?php submit_button( 'Enregistrer les réglages email' ); ?>
+                </form>
+
+            <?php elseif ( $tab === 'logs' ) : ?>
+
+                <?php Agri_Youtube_Logger::render_tab(); ?>
 
             <?php endif; ?>
         </div>

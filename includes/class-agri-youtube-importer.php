@@ -17,7 +17,7 @@ class Agri_Youtube_Importer {
     // SYNC PRINCIPAL — lit toutes les playlists et les classe FR/EN
     // -------------------------------------------------------------------------
 
-    public function sync() {
+    public function sync( $source = 'cron_5min' ) {
         $playlists = $this->api->get_playlists();
         $imported  = 0;
         $skipped   = 0;
@@ -65,6 +65,12 @@ class Agri_Youtube_Importer {
 
         update_option( 'agri_yt_last_sync', current_time( 'mysql' ) );
         update_option( 'agri_yt_last_sync_result', compact( 'imported', 'skipped' ) );
+
+        Agri_Youtube_Logger::log( $imported, $skipped, $source );
+
+        if ( $imported > 0 ) {
+            $this->maybe_send_email_notification( $imported );
+        }
 
         return compact( 'imported', 'skipped' );
     }
@@ -287,19 +293,25 @@ class Agri_Youtube_Importer {
     }
 
     // -------------------------------------------------------------------------
-    // HELPERS
+    // NOTIFICATION EMAIL
     // -------------------------------------------------------------------------
 
-    private function video_exists( $video_id ) {
-        $posts = get_posts( [
-            'post_type'   => $this->post_type,
-            'meta_key'    => '_agri_yt_video_id',
-            'meta_value'  => $video_id,
-            'fields'      => 'ids',
-            'numberposts' => 1,
-        ]);
-        return ! empty( $posts );
+    private function maybe_send_email_notification( $count ) {
+        if ( ! get_option( 'agri_yt_email_enabled', 0 ) ) return;
+
+        $to      = get_option( 'agri_yt_email_address', get_option( 'admin_email' ) );
+        $subject = get_option( 'agri_yt_email_subject', '[AgriTV] {count} nouvelle(s) vidéo(s) importée(s)' );
+        $subject = str_replace( '{count}', $count, $subject );
+
+        $message  = get_option( 'agri_yt_email_body', "Bonjour,\n\n{count} nouvelle(s) vidéo(s) viennent d'être importées sur votre site.\n\nConsultez les vidéos : {site_url}" );
+        $message  = str_replace( [ '{count}', '{site_url}' ], [ $count, admin_url( 'options-general.php?page=agri-youtube-sync' ) ], $message );
+
+        wp_mail( $to, $subject, $message );
     }
+
+    // -------------------------------------------------------------------------
+    // HELPERS
+    // -------------------------------------------------------------------------
 
     private function save_stats_meta( $post_id, $stats ) {
         update_post_meta( $post_id, '_agri_yt_views',        intval( $stats['views']        ?? 0 ) );
