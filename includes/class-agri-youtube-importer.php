@@ -256,23 +256,38 @@ class Agri_Youtube_Importer {
                 }
             }
         } else {
-            // --- VIDÉO NORMALE → videos ---
-            // Catégorie = rubrique
+            // --- VIDÉO NORMALE → movies ou videos ---
+            $is_movies = ( $target_post_type === 'movies' );
+
             if ( $rubrique ) {
                 $this->assign_rubrique( $post_id, $rubrique );
-                $this->assign_taxonomy_term( $post_id, $rubrique, 'videos_cat' );
+                // Catégorie selon le post type
+                $cat_tax = $is_movies ? 'movies_cat' : 'videos_cat';
+                $this->assign_taxonomy_term( $post_id, $rubrique, $cat_tax );
+                // Genres — partagé movies + tv_shows
+                $this->assign_taxonomy_term( $post_id, $rubrique, 'genres' );
             }
-            // Tags YouTube → videos_tag + tags WordPress
+
+            // Tags → taxonomie selon post type + tags WP standard
             if ( ! empty( $stats['tags'] ) ) {
                 wp_set_post_tags( $post_id, $stats['tags'], false );
-                if ( taxonomy_exists( 'videos_tag' ) ) {
-                    wp_set_object_terms( $post_id, $stats['tags'], 'videos_tag', false );
+                $tag_tax = $is_movies ? 'movies_tag' : 'videos_tag';
+                if ( taxonomy_exists( $tag_tax ) ) {
+                    wp_set_object_terms( $post_id, $stats['tags'], $tag_tax, false );
                 }
+                // Topics = premier tag YouTube
+                $this->assign_taxonomy_term( $post_id, $stats['tags'][0], 'topics' );
             }
-            // Playlist → videos_playlist
+
+            // Playlist selon post type
             if ( $playlist_title ) {
-                $this->assign_taxonomy_term( $post_id, $playlist_title, 'videos_playlist' );
+                $pl_tax = $is_movies ? 'movies_playlist' : 'videos_playlist';
+                $this->assign_taxonomy_term( $post_id, $playlist_title, $pl_tax );
             }
+
+            // Langue → countries (ex: "Français" ou "English")
+            $country_label = ( $lang === 'fr' ) ? 'Français' : 'English';
+            $this->assign_taxonomy_term( $post_id, $country_label, 'countries' );
         }
 
         // Langue Polylang (si installé)
