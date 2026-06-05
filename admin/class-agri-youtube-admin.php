@@ -11,6 +11,9 @@ class Agri_Youtube_Admin {
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_styles' ] );
         add_action( 'admin_head-edit.php',   [ $this, 'add_youtube_button_to_movies' ] );
         add_action( 'update_option_agri_yt_api_key', [ $this, 'auto_websub_subscribe' ], 10, 2 );
+        // Metabox import YouTube sur la page d'ajout de vidéo
+        add_action( 'add_meta_boxes', [ $this, 'add_youtube_import_metabox' ] );
+        add_action( 'wp_ajax_agri_yt_fetch_video', [ $this, 'ajax_fetch_video' ] );
     }
 
     public function auto_websub_subscribe( $old, $new ) {
@@ -486,5 +489,140 @@ class Agri_Youtube_Admin {
             <?php endif; ?>
         </div>
         <?php
+    }
+
+    // -------------------------------------------------------------------------
+    // METABOX — Import YouTube sur la page d'ajout de vidéo
+    // -------------------------------------------------------------------------
+
+    public function add_youtube_import_metabox() {
+        $post_type = get_option( 'agri_yt_post_type', 'movies' );
+        add_meta_box(
+            'agri_yt_import_metabox',
+            '▶ Importer depuis YouTube',
+            [ $this, 'render_youtube_import_metabox' ],
+            [ $post_type, 'videos' ],
+            'side',
+            'high'
+        );
+    }
+
+    public function render_youtube_import_metabox( $post ) {
+        ?>
+        <div id="agri-yt-metabox">
+            <p style="font-size:12px;color:#666;margin-top:0;">Collez une URL YouTube pour pré-remplir automatiquement tous les champs.</p>
+            <input type="text" id="agri-yt-url-input"
+                placeholder="https://www.youtube.com/watch?v=..."
+                style="width:100%;margin-bottom:8px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;" />
+            <button type="button" id="agri-yt-fetch-btn"
+                style="width:100%;background:#7ED957;border:1px solid #5db346;color:#000;font-weight:600;padding:7px;border-radius:4px;cursor:pointer;font-size:13px;">
+                ⬇ Récupérer les infos YouTube
+            </button>
+            <div id="agri-yt-status" style="margin-top:8px;font-size:12px;"></div>
+            <div id="agri-yt-preview" style="display:none;margin-top:10px;">
+                <img id="agri-yt-thumb-preview" src="" style="width:100%;border-radius:4px;" />
+                <p id="agri-yt-title-preview" style="font-size:12px;font-weight:600;margin:6px 0 2px;"></p>
+                <p id="agri-yt-stats-preview" style="font-size:11px;color:#888;margin:0;"></p>
+            </div>
+        </div>
+        <script>
+        document.getElementById('agri-yt-fetch-btn').addEventListener('click', function() {
+            var url   = document.getElementById('agri-yt-url-input').value.trim();
+            var status = document.getElementById('agri-yt-status');
+            if ( ! url ) { status.innerHTML = '<span style="color:#c00;">Collez une URL YouTube.</span>'; return; }
+
+            // Extraire l'ID vidéo
+            var match = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            if ( ! match ) { status.innerHTML = '<span style="color:#c00;">URL YouTube invalide.</span>'; return; }
+            var videoId = match[1];
+
+            status.innerHTML = '<span style="color:#888;">Chargement...</span>';
+            this.disabled = true;
+            var btn = this;
+
+            fetch( ajaxurl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'action=agri_yt_fetch_video&video_id=' + encodeURIComponent(videoId) + '&nonce=<?php echo wp_create_nonce('agri_yt_fetch_video'); ?>'
+            })
+            .then(r => r.json())
+            .then(function(data) {
+                btn.disabled = false;
+                if ( ! data.success ) {
+                    status.innerHTML = '<span style="color:#c00;">' + data.data + '</span>';
+                    return;
+                }
+                var d = data.data;
+                status.innerHTML = '<span style="color:#2e7d32;">✅ Informations récupérées !</span>';
+
+                // Remplir le titre
+                var titleInput = document.querySelector('#title');
+                if (titleInput) titleInput.value = d.title;
+
+                // Remplir le contenu (iframe embed)
+                if (typeof wp !== 'undefined' && wp.data) {
+                    wp.data.dispatch('core/editor').editPost({ title: d.title, content: d.embed + '\n\n' + d.description });
+                } else {
+                    var content = document.querySelector('#content');
+                    if (content) content.value = d.embed + '\n\n' + d.description;
+                }
+
+                // Aperçu
+                document.getElementById('agri-yt-preview').style.display = 'block';
+                document.getElementById('agri-yt-thumb-preview').src = d.thumb;
+                document.getElementById('agri-yt-title-preview').textContent = d.title;
+                document.getElementById('agri-yt-stats-preview').textContent = '👁 ' + d.views + '  ·  ⏱ ' + d.duration + '  ·  ' + d.lang.toUpperCase();
+
+                // Stocker l'ID pour la sauvegarde
+                var hidden = document.createElement('input');
+                hidden.type  = 'hidden';
+                hidden.name  = 'agri_yt_video_id_import';
+                hidden.value = d.video_id;
+                document.getElementById('agri-yt-metabox').appendChild(hidden);
+            })
+            .catch(function() {
+                btn.disabled = false;
+                status.innerHTML = '<span style="color:#c00;">Erreur réseau.</span>';
+            });
+        });
+        </script>
+        <?php
+    }
+
+    public function ajax_fetch_video() {
+        check_ajax_referer( 'agri_yt_fetch_video', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) wp_send_json_error( 'Non autorisé' );
+
+        $video_id = sanitize_text_field( $_POST['video_id'] ?? '' );
+        if ( ! $video_id ) wp_send_json_error( 'ID vidéo manquant' );
+
+        $api     = new Agri_Youtube_API();
+        $details = $api->get_video_details( $video_id );
+        if ( ! $details ) wp_send_json_error( 'Vidéo introuvable ou clé API invalide' );
+
+        $stats   = $api->get_videos_stats( [ $video_id ] )[ $video_id ] ?? [];
+        $snippet = $details['snippet'];
+        $lang    = Agri_Youtube_Importer::detect_language( $snippet['title'] );
+        $thumb   = $snippet['thumbnails']['maxres']['url']
+                   ?? $snippet['thumbnails']['high']['url']
+                   ?? $snippet['thumbnails']['default']['url']
+                   ?? '';
+
+        $embed = '<div style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;">'
+               . '<iframe src="https://www.youtube.com/embed/' . esc_attr( $video_id ) . '" '
+               . 'style="position:absolute;top:0;left:0;width:100%;height:100%;" '
+               . 'frameborder="0" allowfullscreen></iframe>'
+               . '</div>';
+
+        wp_send_json_success( [
+            'video_id'    => $video_id,
+            'title'       => sanitize_text_field( $snippet['title'] ),
+            'description' => wp_strip_all_tags( $snippet['description'] ),
+            'thumb'       => esc_url( $thumb ),
+            'embed'       => $embed,
+            'views'       => number_format_i18n( intval( $stats['views'] ?? 0 ) ),
+            'duration'    => $stats['duration_fmt'] ?? '',
+            'lang'        => $lang,
+        ] );
     }
 }
